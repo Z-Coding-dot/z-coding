@@ -307,6 +307,7 @@ app.post("/admin/delete/:id", async (req, res) => {
 
 // ✅ Route: Search News (User Query)
 app.get("/search-news", isAuthenticated, async (req, res) => {
+  console.log("NEWS_API_KEY:", process.env.NEWS_API_KEY);
   const userQuery = req.query.query || "latest";
   let targetLanguage = req.headers["accept-language"]?.split(",")[0] || "en";
 
@@ -486,6 +487,7 @@ app.get("/search-news", isAuthenticated, async (req, res) => {
 
 // ✅ Route: Fetching Top Headlines
 app.get("/api1", isAuthenticated, async (req, res) => {
+  console.log("NEWS_API_KEY:", process.env.NEWS_API_KEY);
   const targetLanguage = req.headers["accept-language"]?.split(",")[0] || "en";
 
   try {
