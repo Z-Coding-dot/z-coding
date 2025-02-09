@@ -304,10 +304,8 @@ app.post("/admin/delete/:id", async (req, res) => {
 
 ///////////////////// Search News //////////////////////😎😎😎😎
 
-
 // ✅ Route: Search News (User Query)
 app.get("/search-news", isAuthenticated, async (req, res) => {
-  console.log("NEWS_API_KEY:", process.env.NEWS_API_KEY);
   const userQuery = req.query.query || "latest";
   let targetLanguage = req.headers["accept-language"]?.split(",")[0] || "en";
 
@@ -315,6 +313,7 @@ app.get("/search-news", isAuthenticated, async (req, res) => {
   targetLanguage = targetLanguage.split("-")[0];
 
   let translatedQuery = userQuery;
+  let articles = [];
 
   try {
     console.log("🔹 Selected Language:", targetLanguage);
@@ -349,56 +348,9 @@ app.get("/search-news", isAuthenticated, async (req, res) => {
       throw new Error("No results from NewsAPI");
     }
 
-    let articles = response.data.articles;
-
-    // 🔹 Translate articles into user's selected language
-    if (targetLanguage !== "en") {
-      console.log("🔹 Translating articles to", targetLanguage, "...");
-
-      articles = await Promise.all(
-        articles.map(async (article) => {
-          const titleText = article.title || "No title available";
-          let descText = article.description || "No description available";
-          if (!descText.trim()) descText = "No description available";
-
-          // ✅ Translate titles and descriptions to user’s language
-          const titleTrans = await translate(titleText, {
-            to: targetLanguage,
-            forceTo: true,
-          });
-          const descTrans = await translate(descText, {
-            to: targetLanguage,
-            forceTo: true,
-          });
-
-          return {
-            title: titleTrans.text,
-            description: descTrans.text.trim() || "No description available",
-            url: article.url,
-            urlToImage: article.urlToImage || "/default-image.jpg",
-            source: article.source?.name || "Unknown Source",
-            publishedAt: article.publishedAt,
-          };
-        })
-      );
-
-      console.log("✅ Successfully translated articles to", targetLanguage);
-    }
-
-    console.log("✅ Successfully fetched", articles.length, "articles.");
-
-    // ✅ Save user search in history (Store only top 3 results)
-    await History.create({
-      userId: req.session.user._id,
-      action: "Searched for news",
-      input: userQuery,
-      date: new Date(),
-      results: articles.slice(0, 3),
-    });
-
-    res.render("api1", { articles, currentLocale: targetLanguage });
+    articles = response.data.articles;
   } catch (error) {
-    console.error("❌ NewsAPI failed! Error:", error.message);
+    console.error("❌ NewsAPI Failed, Switching to NewsData.io");
 
     // 🔹 Fallback API (NewsData.io)
     if (!process.env.SECOND_NEWS_API_KEY) {
@@ -414,13 +366,11 @@ app.get("/search-news", isAuthenticated, async (req, res) => {
         {
           params: {
             apikey: process.env.SECOND_NEWS_API_KEY,
-            q: "default",
+            q: translatedQuery,
           },
           headers: { "User-Agent": "Mozilla/5.0" },
         }
       );
-
-      console.log("✅ Fallback API Response:", fallbackResponse.status);
 
       if (
         !fallbackResponse.data.results ||
@@ -430,64 +380,76 @@ app.get("/search-news", isAuthenticated, async (req, res) => {
         return res.status(404).send("No news articles found in fallback API.");
       }
 
-      // ✅ Translate fallback articles if needed
-      let fallbackArticles = fallbackResponse.data.results;
-      if (targetLanguage !== "en") {
-        console.log(
-          "🔹 Translating fallback articles to",
-          targetLanguage,
-          "..."
-        );
+      articles = fallbackResponse.data.results.map((article) => ({
+        title: article.title,
+        description: article.description || "No description available",
+        url: article.link,
+        urlToImage: article.image_url || "/default-image.jpg",
+        source: article.source_id || "Unknown Source",
+        publishedAt: article.pubDate,
+      }));
 
-        fallbackArticles = await Promise.all(
-          fallbackArticles.map(async (article) => {
-            const titleText = article.title || "No title available";
-            let descText = article.description || "No description available";
-            if (!descText.trim()) descText = "No description available";
-
-            const titleTrans = await translate(titleText, {
-              to: targetLanguage,
-              forceTo: true,
-            });
-            const descTrans = await translate(descText, {
-              to: targetLanguage,
-              forceTo: true,
-            });
-
-            return {
-              title: titleTrans.text,
-              description: descTrans.text.trim() || "No description available",
-              url: article.link,
-              urlToImage: article.image_url || "/default-image.jpg",
-              source: article.source_id || "Unknown Source",
-              publishedAt: article.pubDate,
-            };
-          })
-        );
-
-        console.log(
-          "✅ Successfully translated fallback articles to",
-          targetLanguage
-        );
-      }
-
-      res.render("api1", {
-        articles: fallbackArticles,
-        currentLocale: targetLanguage,
-      });
+      console.log("✅ Successfully switched to Fallback API.");
     } catch (fallbackError) {
       console.error(
         "❌ Fallback API Request Failed:",
         fallbackError.response?.data || fallbackError.message
       );
-      res.status(500).send("Error fetching news articles.");
+      return res.status(500).send("Error fetching news articles.");
     }
   }
+
+  // 🔹 Translate articles into user's selected language
+  if (targetLanguage !== "en") {
+    console.log("🔹 Translating articles to", targetLanguage, "...");
+
+    articles = await Promise.all(
+      articles.map(async (article) => {
+        const titleText = article.title || "No title available";
+        let descText = article.description || "No description available";
+        if (!descText.trim()) descText = "No description available";
+
+        // ✅ Translate titles and descriptions to user’s language
+        const titleTrans = await translate(titleText, {
+          to: targetLanguage,
+          forceTo: true,
+        });
+        const descTrans = await translate(descText, {
+          to: targetLanguage,
+          forceTo: true,
+        });
+
+        return {
+          title: titleTrans.text,
+          description: descTrans.text.trim() || "No description available",
+          url: article.url || article.link,
+          urlToImage:
+            article.urlToImage || article.image_url || "/default-image.jpg",
+          source: article.source?.name || article.source_id || "Unknown Source",
+          publishedAt: article.publishedAt || article.pubDate,
+        };
+      })
+    );
+
+    console.log("✅ Successfully translated articles to", targetLanguage);
+  }
+
+  console.log("✅ Successfully fetched", articles.length, "articles.");
+
+  // ✅ Save user search in history (Store only top 3 results)
+  await History.create({
+    userId: req.session.user._id,
+    action: "Searched for news",
+    input: userQuery,
+    date: new Date(),
+    results: articles.slice(0, 3),
+  });
+
+  res.render("api1", { articles, currentLocale: targetLanguage });
 });
 
 // ✅ Route: Fetching Top Headlines
 app.get("/api1", isAuthenticated, async (req, res) => {
-  console.log("NEWS_API_KEY:", process.env.NEWS_API_KEY);
   const targetLanguage = req.headers["accept-language"]?.split(",")[0] || "en";
 
   try {
